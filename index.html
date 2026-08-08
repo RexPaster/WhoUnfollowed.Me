@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhoUnfollowed.Me - Check your Followers</title>
+    
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Load React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Load Babel to compile JSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo } = React;
+
+        // --- SVG Icons (Replacing lucide-react for the standalone version) ---
+        const Icon = ({ children, className = "w-6 h-6", ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+                {children}
+            </svg>
+        );
+        const Upload = (props) => <Icon {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></Icon>;
+        const Users = (props) => <Icon {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
+        const UserMinus = (props) => <Icon {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="22" x2="16" y1="11" y2="11"/></Icon>;
+        const UserCheck = (props) => <Icon {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></Icon>;
+        const Search = (props) => <Icon {...props}><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/></Icon>;
+        const Info = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></Icon>;
+        const Instagram = (props) => <Icon {...props}><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></Icon>;
+        const ChevronRight = (props) => <Icon {...props}><polyline points="9 18 15 12 9 6"/></Icon>;
+        const RefreshCcw = (props) => <Icon {...props}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></Icon>;
+
+        // --- Main App Component ---
+        function App() {
+            const [step, setStep] = useState('upload'); // 'upload' | 'results'
+            const [error, setError] = useState(null);
+            
+            const [followerFiles, setFollowerFiles] = useState([null]);
+            const [followingFile, setFollowingFile] = useState(null);
+
+            const [data, setData] = useState({
+                notFollowingMe: [],
+                iDontFollow: [],
+                mutuals: [],
+            });
+
+            const [activeTab, setActiveTab] = useState('notFollowingMe');
+            const [searchQuery, setSearchQuery] = useState('');
+
+            // Extractor for Instagram's JSON structures
+            const extractUsernames = (parsedJson, type) => {
+                let usernames = [];
+                try {
+                    if (type === 'followers') {
+                        if (Array.isArray(parsedJson)) {
+                            parsedJson.forEach(item => {
+                                if (item.string_list_data && item.string_list_data.length > 0) {
+                                    usernames.push(item.string_list_data[0].value);
+                                }
+                            });
+                        }
+                    } else if (type === 'following') {
+                        if (parsedJson.relationships_following && Array.isArray(parsedJson.relationships_following)) {
+                            parsedJson.relationships_following.forEach(item => {
+                                if (item.string_list_data && item.string_list_data.length > 0) {
+                                    usernames.push(item.string_list_data[0].value);
+                                }
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error extracting usernames", e);
+                }
+                return usernames;
+            };
+
+            const handleProcess = async () => {
+                const validFollowerFiles = followerFiles.filter(f => f !== null);
+                if (validFollowerFiles.length === 0 || !followingFile) {
+                    setError("Please select at least your followers_1 and following JSON files.");
+                    return;
+                }
+
+                setError(null);
+
+                try {
+                    const readJsonFile = (file) => {
+                        return new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = (e) => {
+                                try {
+                                    resolve(JSON.parse(e.target.result));
+                                } catch (err) {
+                                    reject(new Error(`Failed to parse ${file.name}. Make sure it's a valid JSON.`));
+                                }
+                            };
+                            reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+                            reader.readAsText(file);
+                        });
+                    };
+
+                    const followersJsons = await Promise.all(validFollowerFiles.map(readJsonFile));
+                    const followingJson = await readJsonFile(followingFile);
+
+                    let followersList = [];
+                    followersJsons.forEach(json => {
+                        followersList = followersList.concat(extractUsernames(json, 'followers'));
+                    });
+                    const followingList = extractUsernames(followingJson, 'following');
+
+                    if (followersList.length === 0 || followingList.length === 0) {
+                        setError("Couldn't find any users in the files. Are you sure you uploaded the correct Instagram export files?");
+                        return;
+                    }
+
+                    const followersSet = new Set(followersList);
+                    const followingSet = new Set(followingList);
+
+                    const notFollowingMe = followingList.filter(user => !followersSet.has(user));
+                    const iDontFollow = followersList.filter(user => !followingSet.has(user));
+                    const mutuals = followingList.filter(user => followersSet.has(user));
+
+                    setData({
+                        notFollowingMe,
+                        iDontFollow,
+                        mutuals
+                    });
+                    
+                    setStep('results');
+                } catch (err) {
+                    setError(err.message);
+                }
+            };
+
+            const activeList = useMemo(() => {
+                let list = [];
+                if (activeTab === 'notFollowingMe') list = data.notFollowingMe;
+                if (activeTab === 'iDontFollow') list = data.iDontFollow;
+                if (activeTab === 'mutuals') list = data.mutuals;
+
+                if (searchQuery) {
+                    const lowerQuery = searchQuery.toLowerCase();
+                    return list.filter(username => username.toLowerCase().includes(lowerQuery));
+                }
+                return list;
+            }, [activeTab, data, searchQuery]);
+
+            const reset = () => {
+                setFollowerFiles([null]);
+                setFollowingFile(null);
+                setData({ notFollowingMe: [], iDontFollow: [], mutuals: [] });
+                setStep('upload');
+                setSearchQuery('');
+                setActiveTab('notFollowingMe');
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100">
+                    <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+                        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-indigo-600">
+                                <Instagram className="w-6 h-6" />
+                                <span className="font-bold text-xl tracking-tight text-slate-900">WhoUnfollowed.Me</span>
+                            </div>
+                            {step === 'results' && (
+                                <button 
+                                    onClick={reset}
+                                    className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors"
+                                >
+                                    <RefreshCcw className="w-4 h-4" /> Start Over
+                                </button>
+                            )}
+                        </div>
+                    </header>
+
+                    <main className="max-w-5xl mx-auto px-4 py-8">
+                        {step === 'upload' && (
+                            <div className="max-w-2xl mx-auto">
+                                <div className="text-center mb-10">
+                                    <h1 className="text-4xl font-extrabold text-slate-900 mb-4">Discover Your Real Connections</h1>
+                                    <p className="text-lg text-slate-600">
+                                        Find out who isn't following you back. Upload your Instagram data export to get started. 
+                                        <span className="block mt-2 text-sm font-medium text-emerald-600 bg-emerald-50 py-1 px-3 rounded-full inline-block">
+                                            🔒 100% Private. Processed locally on your device.
+                                        </span>
+                                    </p>
+                                </div>
+
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8">
+                                    {error && (
+                                        <div className="mb-6 p-4 bg-red-50 border border-red-100 text-red-600 rounded-lg flex gap-3 text-sm">
+                                            <Info className="w-5 h-5 shrink-0" />
+                                            <p>{error}</p>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-6">
+                                        {/* Followers Upload */}
+                                        {followerFiles.map((file, index) => {
+                                            const fileNum = index + 1;
+                                            return (
+                                                <div key={index}>
+                                                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                                        Upload <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-600">followers_{fileNum}.json</code>
+                                                    </label>
+                                                    <label className={`flex justify-center w-full h-32 px-4 transition bg-slate-50 border-2 border-slate-300 border-dashed rounded-xl appearance-none cursor-pointer hover:border-indigo-400 focus:outline-none ${file ? 'border-indigo-500 bg-indigo-50' : ''}`}>
+                                                        <span className="flex items-center space-x-2">
+                                                            <Upload className={`w-6 h-6 ${file ? 'text-indigo-600' : 'text-slate-400'}`} />
+                                                            <span className="font-medium text-slate-600">
+                                                                {file ? file.name : 'Click to select file'}
+                                                            </span>
+                                                        </span>
+                                                        <input 
+                                                            type="file" 
+                                                            accept=".json" 
+                                                            className="hidden" 
+                                                            onChange={(e) => {
+                                                                const newFiles = [...followerFiles];
+                                                                newFiles[index] = e.target.files[0];
+                                                                setFollowerFiles(newFiles);
+                                                            }} 
+                                                        />
+                                                    </label>
+                                                </div>
+                                            );
+                                        })}
+
+                                        <button 
+                                            onClick={() => setFollowerFiles([...followerFiles, null])}
+                                            className="text-sm font-medium text-indigo-600 hover:text-indigo-700 flex items-center transition-colors"
+                                        >
+                                            + I have a followers_{followerFiles.length + 1}.json file
+                                        </button>
+
+                                        {/* Following Upload */}
+                                        <div className="pt-4 border-t border-slate-200">
+                                            <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                                Upload <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-600">following.json</code>
+                                            </label>
+                                            <label className={`flex justify-center w-full h-32 px-4 transition bg-slate-50 border-2 border-slate-300 border-dashed rounded-xl appearance-none cursor-pointer hover:border-indigo-400 focus:outline-none ${followingFile ? 'border-indigo-500 bg-indigo-50' : ''}`}>
+                                                <span className="flex items-center space-x-2">
+                                                    <Upload className={`w-6 h-6 ${followingFile ? 'text-indigo-600' : 'text-slate-400'}`} />
+                                                    <span className="font-medium text-slate-600">
+                                                        {followingFile ? followingFile.name : 'Click to select file'}
+                                                    </span>
+                                                </span>
+                                                <input type="file" accept=".json" name="file_upload" className="hidden" onChange={(e) => setFollowingFile(e.target.files[0])} />
+                                            </label>
+                                        </div>
+
+                                        <button 
+                                            onClick={handleProcess}
+                                            disabled={followerFiles[0] === null || !followingFile}
+                                            className="w-full mt-4 bg-indigo-600 text-white font-semibold py-3.5 px-4 rounded-xl shadow-sm hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
+                                        >
+                                            Analyze My Data <ChevronRight className="w-5 h-5" />
+                                        </button>
+                                    </div>
+
+                                    <div className="mt-8 pt-6 border-t border-slate-100 text-sm text-slate-500">
+                                        <p className="font-semibold text-slate-700 mb-1">How to get these files:</p>
+                                        <ol className="list-decimal pl-4 space-y-1">
+                                            <li>Go to Instagram Settings &gt; Your activity &gt; Download your information.</li>
+                                            <li>Request a download in <strong>JSON</strong> format.</li>
+                                            <li>Once downloaded, extract the ZIP and find the <code className="bg-slate-100 px-1 py-0.5 rounded">followers_and_following</code> folder.</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {step === 'results' && (
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                {/* Stats Overview */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                                    <button 
+                                        onClick={() => setActiveTab('notFollowingMe')}
+                                        className={`p-6 rounded-2xl border text-left transition-all ${activeTab === 'notFollowingMe' ? 'bg-white border-red-200 shadow-md ring-1 ring-red-100' : 'bg-white/50 border-slate-200 hover:bg-white hover:shadow-sm'}`}
+                                    >
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className={`p-3 rounded-xl ${activeTab === 'notFollowingMe' ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                <UserMinus className="w-6 h-6" />
+                                            </div>
+                                            <span className="text-3xl font-bold text-slate-900">{data.notFollowingMe.length}</span>
+                                        </div>
+                                        <h3 className="font-semibold text-slate-900">Not Following Back</h3>
+                                        <p className="text-sm text-slate-500 mt-1">People you follow who don't follow you.</p>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => setActiveTab('mutuals')}
+                                        className={`p-6 rounded-2xl border text-left transition-all ${activeTab === 'mutuals' ? 'bg-white border-indigo-200 shadow-md ring-1 ring-indigo-100' : 'bg-white/50 border-slate-200 hover:bg-white hover:shadow-sm'}`}
+                                    >
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className={`p-3 rounded-xl ${activeTab === 'mutuals' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                <Users className="w-6 h-6" />
+                                            </div>
+                                            <span className="text-3xl font-bold text-slate-900">{data.mutuals.length}</span>
+                                        </div>
+                                        <h3 className="font-semibold text-slate-900">Mutuals</h3>
+                                        <p className="text-sm text-slate-500 mt-1">You follow each other.</p>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => setActiveTab('iDontFollow')}
+                                        className={`p-6 rounded-2xl border text-left transition-all ${activeTab === 'iDontFollow' ? 'bg-white border-emerald-200 shadow-md ring-1 ring-emerald-100' : 'bg-white/50 border-slate-200 hover:bg-white hover:shadow-sm'}`}
+                                    >
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className={`p-3 rounded-xl ${activeTab === 'iDontFollow' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                <UserCheck className="w-6 h-6" />
+                                            </div>
+                                            <span className="text-3xl font-bold text-slate-900">{data.iDontFollow.length}</span>
+                                        </div>
+                                        <h3 className="font-semibold text-slate-900">You Don't Follow</h3>
+                                        <p className="text-sm text-slate-500 mt-1">People who follow you, but you don't follow back.</p>
+                                    </button>
+                                </div>
+
+                                {/* List View */}
+                                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                                        <h2 className="font-bold text-lg text-slate-800">
+                                            {activeTab === 'notFollowingMe' && 'Users not following you back'}
+                                            {activeTab === 'mutuals' && 'Your mutual followers'}
+                                            {activeTab === 'iDontFollow' && 'Fans you don\'t follow back'}
+                                        </h2>
+                                        
+                                        <div className="relative w-full sm:w-64">
+                                            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                                                <Search className="w-4 h-4" />
+                                            </div>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Search usernames..." 
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
+                                        {activeList.length === 0 ? (
+                                            <div className="p-12 text-center text-slate-500 flex flex-col items-center">
+                                                <Search className="w-12 h-12 text-slate-300 mb-3" />
+                                                <p className="text-lg font-medium text-slate-700">No users found</p>
+                                                <p className="text-sm">Try adjusting your search or switch tabs.</p>
+                                            </div>
+                                        ) : (
+                                            <ul className="p-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                                {activeList.map((username) => (
+                                                    <li key={username}>
+                                                        <a 
+                                                            href={`https://instagram.com/${username}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-colors group"
+                                                        >
+                                                            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 p-[2px]">
+                                                                <div className="w-full h-full bg-white rounded-full flex items-center justify-center border-2 border-white">
+                                                                    <span className="font-bold text-slate-700 text-xs uppercase">
+                                                                        {username.slice(0, 2)}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <span className="font-medium text-slate-700 group-hover:text-indigo-600 transition-colors truncate">
+                                                                {username}
+                                                            </span>
+                                                        </a>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        // Render the app
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
